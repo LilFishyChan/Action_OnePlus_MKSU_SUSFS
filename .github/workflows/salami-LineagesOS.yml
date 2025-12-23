@@ -83,7 +83,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update && sudo apt upgrade -y
-          sudo apt install -y python3 git curl build-essential bc bison flex libssl-dev libncurses5-dev libelf-dev zstd gnupg
+          sudo apt install -y python3 git curl build-essential bc bison flex libssl-dev libncurses5-dev libelf-dev zstd gnupg jq gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
       - name: Clone Kernel Source
         run: |
@@ -237,15 +237,11 @@ jobs:
           export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
           export CC=clang
           
-          # 清理
-          make clean
-          make mrproper
-          
-          # 配置
-          make ${{ github.event.inputs.DEFCONFIG }}
+          # 配置 (LLVM=1 启用完整 LLVM 工具链支持)
+          make LLVM=1 ${{ github.event.inputs.DEFCONFIG }}
           
           # 编译
-          make -j$(nproc) Image
+          make LLVM=1 -j$(nproc) Image
           
           # 检查产物
           if [ -f arch/arm64/boot/Image ]; then
