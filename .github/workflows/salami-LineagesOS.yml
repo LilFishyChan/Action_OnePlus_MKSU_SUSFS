@@ -92,11 +92,21 @@ jobs:
       - name: Download Clang Toolchain
         run: |
           mkdir -p clang
-          cd clang
-          # 下载 AOSP Clang (可以使用其他版本，这里使用 r450784d 作为示例，适用于较新的内核)
-          # 注意：如果编译报错提示 Clang 版本问题，请尝试更换版本
-          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r487747c.tar.gz
-          tar -xzf clang-r487747c.tar.gz
+          echo "Cloning Clang repo..."
+          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b master clang_repo
+          
+          # 尝试使用指定的版本，如果不存在则使用最新的
+          TARGET_CLANG="clang-r487747c"
+          if [ -d "clang_repo/$TARGET_CLANG" ]; then
+            echo "Found specified Clang: $TARGET_CLANG"
+            mv clang_repo/$TARGET_CLANG/* clang/
+          else
+            echo "Specified Clang $TARGET_CLANG not found in master. Using latest available..."
+            LATEST_CLANG=$(find clang_repo -maxdepth 1 -type d -name "clang-r*" | sort -V | tail -n 1)
+            echo "Using Clang: $LATEST_CLANG"
+            mv $LATEST_CLANG/* clang/
+          fi
+          rm -rf clang_repo
           
       - name: Force remove -dirty suffix
         run: |
