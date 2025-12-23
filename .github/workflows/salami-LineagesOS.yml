@@ -197,6 +197,14 @@ jobs:
           echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
           echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
 
+          # 通用配置优化 (参考 test.yml)
+          echo "CONFIG_MODULE_SIG=n" >> "$CONFIG_FILE"
+          echo "CONFIG_MODULE_SIG_FORCE=n" >> "$CONFIG_FILE"
+          echo "CONFIG_MODULE_SIG_ALL=n" >> "$CONFIG_FILE"
+          
+          # 尝试禁用 LTO 以减少编译时间和潜在错误 (可选)
+          # echo "CONFIG_LTO_CLANG_THIN=y" >> "$CONFIG_FILE"
+
           # SUSFS config
           echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$CONFIG_FILE"
@@ -226,6 +234,13 @@ jobs:
              echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
              echo "CONFIG_ZRAM_DEF_COMP_LZ4KD=y" >> "$CONFIG_FILE"
           fi
+
+      - name: Fix missing Kconfig
+        run: |
+          cd kernel_workspace
+          # 修复 init/Kconfig 引用不存在文件的问题
+          mkdir -p kernel/oplus_cpu/thermal
+          touch kernel/oplus_cpu/thermal/Kconfig
 
       - name: Build Kernel
         run: |
