@@ -1,0 +1,250 @@
+name: Build LineageOS OnePlus 11 Kernel with SukiSU Ultra
+
+on:
+  workflow_dispatch: 
+    inputs:
+      KERNEL_VERSION:
+        type: choice
+        description: "内核版本"
+        required: true
+        default: "5.15"
+        options:
+          - "5.15"
+      SUSFS_CI: 
+        type: boolean
+        description: "下载SUSFS模块是否使用CI构建？"
+        required: true
+        default: true
+      VFS: 
+        type: boolean
+        description: "是否启用手动钩子？"
+        required: true
+        default: true
+      KPM:
+        type: boolean
+        description: "是否启用KPM？"
+        required: true
+        default: true
+      ZRAM:
+        type: boolean
+        description: "是否启用添加更多的ZRAM算法？"
+        required: true
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          swap-size-mb: 8192
+          remove-dotnet:  'true'
+          remove-android:  'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "LilFishyChan"
+          git config --global user.email "your-email@example.com"
+
+      - name: Install dependencies
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1. 2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3 clang llvm lld
+
+      - name: Show selected inputs debug
+        run: |
+          echo "Selected KERNEL_VERSION: ${{ github. event.inputs.KERNEL_VERSION }}"
+          echo "Selected SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
+          echo "Selected ZRAM: ${{ github.event.inputs.ZRAM }}"
+          echo "Selected VFS:  ${{ github.event.inputs. VFS }}"
+          echo "Selected KPM: ${{ github.event.inputs.KPM }}"
+
+      - name: Clone LineageOS kernel source
+        run: |
+          git clone https://github.com/LineageOS/android_kernel_oneplus_sm8550.git -b lineage-23.0 --depth=1 kernel
+          cd kernel
+
+      - name:  Add KernelSU-SukiSU Ultra
+        run: |
+          cd kernel
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+          cd ./KernelSU
+          KSU_VERSION=$(expr $(/usr/bin/git rev-list --count main) "+" 10606)
+          echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
+          export KSU_VERSION=$KSU_VERSION
+          sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
+
+      - name: Apply Patches SukiSU Ultra
+        run: |
+          cd kernel
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android15-${{ github.event.inputs. KERNEL_VERSION }}
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          
+          echo "正在给内核打susfs补丁"
+          cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-${{ github.event.inputs. KERNEL_VERSION }}.patch ./
+          cp susfs4ksu/kernel_patches/fs/* ./fs/
+          cp susfs4ksu/kernel_patches/include/linux/* ./include/linux/
+
+          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+            echo "正在给内核打zram补丁"
+            cp -r SukiSU_patch/other/zram/lz4k/include/linux/* ./include/linux
+            cp -r SukiSU_patch/other/zram/lz4k/lib/* ./lib
+            cp -r SukiSU_patch/other/zram/lz4k/crypto/* ./crypto
+            cp -r SukiSU_patch/other/zram/lz4k_oplus ./lib/
+          fi
+
+          patch -p1 < 50_add_susfs_in_gki-android15-${{ github.event.inputs. KERNEL_VERSION }}.patch || true
+          echo "完成"
+
+      - name: Apply Hide Stuff Patches
+        run: |
+          cd kernel
+          cp SukiSU_patch/69_hide_stuff. patch ./
+          echo "正在打隐藏应用补丁"
+          patch -p1 -F 3 < 69_hide_stuff.patch
+
+      - name: Apply LZ4KD
+        run: |
+          cd kernel
+          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+            cp SukiSU_patch/other/zram/zram_patch/${{ github.event.inputs. KERNEL_VERSION }}/lz4kd. patch ./
+            echo "正在打lz4kd补丁"
+            patch -p1 -F 3 < lz4kd.patch || true
+            echo '完成LZ4KD补丁'
+          fi
+
+      - name: Add Configuration Settings
+        run: |
+          cd kernel
+          CONFIG_FILE=./arch/arm64/configs/vendor/kalama-qgki_defconfig
+
+          # SukiSU Ultra config
+          echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+
+          # SUSFS config
+          echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
+
+          # LZ4KD配置
+          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+            if grep -q "CONFIG_ZSMALLOC" -- "$CONFIG_FILE"; then
+              sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "$CONFIG_FILE"
+            else
+              echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
+            fi
+            sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
+            
+            echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CRYPTO_LZ4K=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CRYPTO_LZ4KD=y" >> "$CONFIG_FILE"
+            echo "CONFIG_CRYPTO_842=y" >> "$CONFIG_FILE"
+            echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
+            echo "CONFIG_MODULE_SIG_FORCE=n" >> "$CONFIG_FILE"
+          fi
+
+      - name: Setup build environment
+        run: |
+          cd kernel
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CLANG_PATH=/usr/bin
+          export PATH=$CLANG_PATH:$PATH
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export LLVM=1
+          export LLVM_IAS=1
+
+      - name: Build kernel
+        run: |
+          cd kernel
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CLANG_PATH=/usr/bin
+          export PATH=$CLANG_PATH:$PATH
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export LLVM=1
+          export LLVM_IAS=1
+          
+          make O=out ARCH=arm64 vendor/kalama-qgki_defconfig
+          make -j$(nproc --all) O=out \
+                      ARCH=arm64 \
+                      LLVM=1 \
+                      LLVM_IAS=1 \
+                      Image
+
+      - name: Make AnyKernel3
+        run: |
+          git clone https://github.com/Numbersf/AnyKernel3 --depth=1
+          rm -rf ./AnyKernel3/. git
+          cp kernel/out/arch/arm64/boot/Image ./AnyKernel3/
+
+      - name:  Apply patch_linux and replace Image
+        if: ${{ github.event.inputs.KPM == 'true' }}
+        run: |
+          cd kernel/out/arch/arm64/boot
+          curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
+          chmod +x patch_linux
+          ./patch_linux
+          rm -f Image
+          mv oImage Image
+          cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
+
+      # 下载 SUSFS 模块（CI）
+      - name: Download Latest SUSFS Module from CI
+        if: ${{ github. event.inputs.SUSFS_CI == 'true' }}
+        run: |
+          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs? status=success" | \
+            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+
+          if [ -z "$LATEST_RUN_ID" ]; then
+            echo "No successful run found for branch v1.5.2+"
+            exit 1
+          fi
+
+          ARTIFACT_URL=$(curl -s -H "Authorization:  Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+
+          curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs.zip "$ARTIFACT_URL"
+          cp ksu_module_susfs. zip ./AnyKernel3/
+
+      # 下载 SUSFS 模块（Release）
+      - name: Download Latest SUSFS Module from Release
+        if: ${{ github.event. inputs.SUSFS_CI == 'false' }}
+        run: |
+          wget https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
+          cp ksu_module_susfs_1.5.2+.zip ./AnyKernel3/
+
+      - name: Set suffix
+        id: suffix
+        run: |
+          echo "value=${{ github.event.inputs.KPM == 'true' && '_KPM' || '' }}${{ github.event.inputs. VFS == 'true' && '_VFS' || '' }}${{ github.event.inputs. ZRAM == 'true' && '_LZ4KD' || '' }}" >> $GITHUB_OUTPUT
+
+      - name: Upload AnyKernel3
+        uses: actions/upload-artifact@v4
+        with:
+          name:  LineageOS_OnePlus11_SukiSUUltra_${{ env.KSUVER }}_Kernel${{ steps.suffix.outputs.value }}
+          path: ./AnyKernel3/*
